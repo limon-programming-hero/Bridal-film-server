@@ -70,31 +70,44 @@ async function run() {
                             let: { stringId: { $toString: "$_id" } },
                             pipeline: [
                                 {
-                                    $match: { $expr: { $eq: ['$$stringId', "$itemId"] } }
+                                    $match:
+                                    {
+                                        $expr:
+                                        {
+                                            $and: [
+                                                { $eq: ['$$stringId', "$itemId"] },
+                                                { $eq: ["$email", email] }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    $addFields: { likedItemId: "$_id", isLiked: true }
+                                },
+                                {
+                                    $project: { likedItemId: 1, isLiked: 1 }
                                 }
                             ],
                             as: "orderedItems"
                         }
+                    },
+                    {
+                        $replaceRoot: { newRoot: { $mergeObjects: [{ $arrayElemAt: ["$orderedItems", 0] }, "$$ROOT"] } }
+                    },
+                    {
+                        $project: { orderedItems: 0 }
                     }
                 ]
                 const allItem = await itemsCollection.aggregate(pipeLine).toArray()
-                console.log(allItem);
-
+                // console.log('aggregate', allItem);
+                return res.send(allItem);
+            } else {
+                const items = await itemsCollection.find({}).toArray();
+                // console.log('not aggregated');
+                return res.send(items)
             }
-
-            const items = await itemsCollection.find({}).toArray();
-            const ides =
-                res.send(items)
         })
-        // duplicating for safe operation 
-        // app.get('/items', async (req, res) => {
-        //     const { email } = req.query;
-        //     console.log(email, req.query);
 
-
-        //     const items = await itemsCollection.find({}).toArray();
-        //     res.send(items)
-        // })
         // todo: change this update properly
         app.patch('/items/:id', async (req, res) => {
             const { id } = req.params;
@@ -105,12 +118,12 @@ async function run() {
             const item = await itemsCollection.findOne(filter);
             const likes = item?.likes ? item.likes : 0;
             console.log(item?.liked + 1, likes);
-            const updateDoc1 = {
+            const updateDoc = {
                 $set: {
                     likes: isLike ? likes + 1 : likes - 1,
                 }
             }
-            const result = await itemsCollection.updateOne(filter, updateDoc1);
+            const result = await itemsCollection.updateOne(filter, updateDoc);
             res.send(result);
         })
         // likes operation 
@@ -122,7 +135,9 @@ async function run() {
         });
         app.delete('/likes/:id', async (req, res) => {
             const { id } = req.params;
+            // console.log(id, req.params)
             const filter = { _id: new ObjectId(id) }
+            console.log(filter);
             const result = await likesCollection.deleteOne(filter);
             console.log({ deletedResult: result });
             res.send(result);
