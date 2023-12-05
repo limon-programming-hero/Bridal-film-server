@@ -51,6 +51,7 @@ const jwtVerify = async (req, res, next) => {
 }
 
 
+
 async function run() {
     try {
         await client.connect();
@@ -61,6 +62,22 @@ async function run() {
         const commentsCollection = client.db('bridal-film').collection('comment-items');
         const bookingCollection = client.db('bridal-film').collection('booking-items');
         const paymentCollection = client.db('bridal-film').collection('payments');
+
+
+        const adminVerify = async (req, res, next) => {
+            const { email } = req.decoded;
+            if (!email) {
+                return errorResponse(res, 'unauthenticated one trying operate as an admin, please login!')
+            }
+            // console.log("admin email", email);
+            const result = await usersCollection.findOne({ email: email });
+            // console.log("found", result)
+            const isAdmin = result?.role === "admin" ? true : false;
+            if (!isAdmin) {
+                return errorResponse(res, 'unauthenticated one trying operate as an admin, please login!')
+            }
+            next();
+        }
 
         app.get('/', (req, res) => {
             res.send('Boss is waiting to finish')
@@ -79,14 +96,22 @@ async function run() {
                     "card"
                 ],
             });
-            console.log(paymentIntent)
+            // console.log(paymentIntent)
             res.send({
                 clientSecret: paymentIntent.client_secret,
             });
         });
         // payment operations
-        app.get('/payments', jwtVerify, async (req, res) => {
+        app.get('/payments', jwtVerify, adminVerify, async (req, res) => {
             const result = await paymentCollection.find({}).toArray();
+            res.send(result);
+        })
+        app.get('/payments/:email', jwtVerify, async (req, res) => {
+            const { email } = req.params;
+            if (email !== req.decoded.email) {
+                return errorResponse(res, 'unauthenticated user trying to get payment history, please login!')
+            }
+            const result = await paymentCollection.find({ email }).toArray();
             res.send(result);
         })
         app.post('/payments', jwtVerify, async (req, res) => {
@@ -147,18 +172,31 @@ async function run() {
                 return res.send(items)
             }
         })
-        app.delete('/items/:id', jwtVerify, async (req, res) => {
+        app.post('/items', jwtVerify, adminVerify, async (req, res) => {
+            const { itemData } = req.body;
             const { email } = req.query;
-            const { id } = req.params;
             if (email !== req?.decoded?.email) {
-                return errorResponse(res, 'unauthenticated trying to modify items, please login!')
+                return errorResponse(res, 'unauthenticated trying to add items, please login!')
             }
-            const filter = { _id: new ObjectId(id) };
-            const result = await itemsCollection.deleteOne(filter);
+            const result = await itemsCollection.insertOne({ itemData });
             res.send(result)
         })
-        // todo: change this update properly
-        app.patch('/items/:id', jwtVerify, async (req, res) => {
+
+        app.patch('/item/update/:id', jwtVerify, adminVerify, async (req, res) => {
+            const { email } = req.query;
+            const { itemData } = req.body;
+            const { id } = req.params;
+            if (email !== req?.decoded?.email) {
+                return errorResponse(res, 'unauthenticated trying to update items, please login!')
+            }
+            const filter = { _id: new ObjectId(id) };
+            const updateDoc = {
+                $set: itemData
+            }
+            const result = await itemsCollection.updateOne(filter, updateDoc);
+            res.send(result);
+        })
+        app.patch('/item/like/:id', jwtVerify, async (req, res) => {
             const { id } = req.params;
             const { isLike, email } = req.body;
             if (req?.decoded?.email !== email) {
@@ -171,7 +209,7 @@ async function run() {
             const filter = { _id: new ObjectId(id) };
             const item = await itemsCollection.findOne(filter);
             const likes = item?.likes ? item.likes : 0;
-            // console.log(item?.liked + 1, likes);
+
             const updateDoc = {
                 $set: {
                     likes: isLike ? likes + 1 : likes - 1,
@@ -180,6 +218,18 @@ async function run() {
             const result = await itemsCollection.updateOne(filter, updateDoc);
             res.send(result);
         })
+        app.delete('/items/:id', jwtVerify, adminVerify, async (req, res) => {
+            const { email } = req.query;
+            const { id } = req.params;
+            if (email !== req?.decoded?.email) {
+                return errorResponse(res, 'unauthenticated trying to modify items, please login!')
+            }
+            const filter = { _id: new ObjectId(id) };
+            const result = await itemsCollection.deleteOne(filter);
+            res.send(result)
+        })
+        // todo: change this update properly
+
         // booking items operations
         // todo:make it accessible only for admin users
         app.get('/booking', async (req, res) => {
@@ -226,7 +276,7 @@ async function run() {
             const result = await sessionsCollection.find({}).toArray();
             res.send(result);
         })
-        app.post('/sessions', jwtVerify, async (req, res) => {
+        app.post('/sessions', jwtVerify, adminVerify, async (req, res) => {
             const { sessionData } = req.body;
             const { email } = req.query;
             if (email !== req.decoded?.email) {
@@ -235,7 +285,7 @@ async function run() {
             const result = await sessionsCollection.insertOne(sessionData);
             res.send(result);
         })
-        app.patch('/sessions/:id', jwtVerify, async (req, res) => {
+        app.patch('/sessions/:id', jwtVerify, adminVerify, async (req, res) => {
             const { id } = req.params;
             const { sessionData } = req.body;
             const { email } = req.query;
@@ -281,8 +331,8 @@ async function run() {
             if (email !== req.decoded.email) {
                 return errorResponse(res, 'unauthenticated trying to get protected data, please login!')
             }
-            const result = await usersCollection.find({ email: email }).toArray();
-            const isAdmin = result[0]?.role === "admin" ? true : false;
+            const result = await usersCollection.findOne({ email: email });
+            const isAdmin = result?.role === "admin" ? true : false;
             // console.log({ isAdmin })
             res.send({ isAdmin });
         })
@@ -292,7 +342,7 @@ async function run() {
             const result = await usersCollection.insertOne(userDetails);
             res.send(result);
         })
-        app.patch('/users', jwtVerify, async (req, res) => {
+        app.patch('/users', jwtVerify, adminVerify, async (req, res) => {
             const { email } = req.query;
             const { updateInfo } = req.body;
 
@@ -306,7 +356,7 @@ async function run() {
             const result = await usersCollection.updateOne(filter, updateDoc);
             res.send(result);
         })
-        app.delete('/users/:id', jwtVerify, async (req, res) => {
+        app.delete('/users/:id', jwtVerify, adminVerify, async (req, res) => {
             const { id } = req.params;
             const { email } = req.query;
 
@@ -316,6 +366,65 @@ async function run() {
             const filter = { _id: new ObjectId(id) };
             const result = await usersCollection.deleteOne(filter);
             res.send(result)
+        })
+        // User Statistics
+        app.get('/user/stat', jwtVerify, async (req, res) => {
+            const { email } = req.query;
+            if (req?.decoded?.email !== email) {
+                return errorResponse(res, 'unauthenticated trying to access user data, please login!')
+            }
+            const like = (await likesCollection.find({ email }).toArray()).length;
+            const payment = (await paymentCollection.find({ email }).toArray()).length;
+            const order = (await bookingCollection.find({ email }).toArray()).length;
+
+            res.send({ like, session: payment, payment, order: order, contact: 4 })
+        })
+        // admin statistics
+        app.get('/admin/stat', jwtVerify, adminVerify, async (req, res) => {
+            const { email } = req.query;
+            if (req?.decoded?.email !== email) {
+                return errorResponse(res, 'unauthenticated trying to access user data, please login!')
+            }
+            const revenue = await paymentCollection.aggregate([
+                {
+                    $group: {
+                        _id: null,
+                        total: { $sum: "$price" }
+                    },
+                },
+                {
+                    $project: {
+                        total: 1,
+                        _id: 0
+                    }
+                }
+            ]).toArray();
+            const pipeline = [
+                { $unwind: "$items" },
+                {
+                    $group: {
+                        _id: "$items.sessionType",
+                        totalPrice: { $sum: "$items.price" },
+                        count: { $sum: 1 }
+                    }
+                },
+                {
+                    $addFields: { session: "$_id" }
+                },
+                {
+                    $project: {
+                        _id: 0, session: 1, totalPrice: 1, count: 1
+                    }
+                }
+            ]
+            const sessionStat = await paymentCollection.aggregate(pipeline).toArray();
+            const user = (await usersCollection.find({}).toArray()).length;
+            const item = (await itemsCollection.find({}).toArray()).length;
+            const session = (await sessionsCollection.find({}).toArray()).length;
+            const order = (await paymentCollection.find({}).toArray()).length;
+
+            console.log(sessionStat)
+            res.send({ revenue: revenue[0].total, user, item, session, order, sessionStat })
         })
         //user or not checking for google login in the frontend
         app.get('/isUser', async (req, res) => {
