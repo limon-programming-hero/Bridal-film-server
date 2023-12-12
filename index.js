@@ -435,7 +435,7 @@ async function run() {
             const session = (await sessionsCollection.find({}).toArray()).length;
             const order = (await paymentCollection.find({}).toArray()).length;
 
-            console.log(sessionStat)
+            // console.log(sessionStat)
             res.send({ revenue: revenue[0].total, user, item, session, order, sessionStat })
         })
         //user or not checking for google login in the frontend
