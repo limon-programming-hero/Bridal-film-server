@@ -231,8 +231,7 @@ async function run() {
         // todo: change this update properly
 
         // booking items operations
-        // todo:make it accessible only for admin users
-        app.get('/booking', async (req, res) => {
+        app.get('/booking', jwtVerify, adminVerify, async (req, res) => {
             const result = await bookingCollection.find({}).toArray();
             res.send(result);
         })
@@ -253,6 +252,17 @@ async function run() {
             const result = await bookingCollection.insertOne(bookingData);
             res.send(result);
         })
+        app.patch('/booking/:id', jwtVerify, adminVerify, async (req, res) => {
+            const { bookingData } = req.body;
+            const { id } = req.params;
+            const updateDocument = {
+                $set: bookingData
+            }
+            // console.log(bookingData);
+            const filter = { _id: new ObjectId(id) }
+            const result = await bookingCollection.updateOne(filter, updateDocument);
+            res.send(result);
+        })
         app.delete('/booking/:id', jwtVerify, async (req, res) => {
             const { id } = req.params;
             const { email } = req.query;
@@ -271,6 +281,8 @@ async function run() {
             const result = await bookingCollection.deleteMany({ email: email });
             res.send(result);
         })
+
+
         // sessions operations
         app.get('/sessions', async (req, res) => {
             const result = await sessionsCollection.find({}).toArray();
