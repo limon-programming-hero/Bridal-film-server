@@ -31,18 +31,12 @@ const errorResponse = (res, message) => {
 const jwtVerify = async (req, res, next) => {
     const token = req.headers.authorization;
     if (!token) {
-        return res.status(401).send({
-            error: true,
-            message: 'unauthenticated user , please login'
-        })
+        return errorResponse(res, "unauthenticated user , please login");
     }
     const jwtToken = token.split(' ')[1];
     jwt.verify(jwtToken, process.env.jwt_token, function (err, decoded) {
         if (err) {
-            return res.status(403).send({
-                error: true,
-                message: 'unauthenticated trying to login, please login with proper email address'
-            })
+            return errorResponse(res, 'unauthenticated trying to login, please login with proper email address')
         }
         req.decoded = decoded;
         // console.log({ decoded })
@@ -141,7 +135,7 @@ async function run() {
                                         {
                                             $and: [
                                                 { $eq: ['$$stringId', "$itemId"] },
-                                                { $eq: ["$email", email] }
+                                                { $eq: ["$email", email] },
                                             ]
                                         }
                                     }
@@ -165,23 +159,57 @@ async function run() {
                 ]
                 const allItem = await itemsCollection.aggregate(pipeLine).toArray();
                 // console.log('aggregate', allItem);
-                return res.send(allItem);
+
+                const permittedItems = allItem.filter(item => item.status !== "pending");
+                return res.send(permittedItems);
             } else {
                 const items = await itemsCollection.find({}).toArray();
-                // console.log('not aggregated');
-                return res.send(items)
+                const permittedItems = items.filter(item => item.status !== "pending");
+                return res.send(permittedItems);
             }
         })
-        app.post('/items', jwtVerify, adminVerify, async (req, res) => {
+        // items get operations for users into dashboard section 
+        app.get('/items/dashboard', jwtVerify, async (req, res) => {
+            const { email } = req.query;
+            // console.log(email, 'into dashboard')
+            if (email !== req?.decoded?.email) {
+                return errorResponse(res, 'unauthenticated trying to get items, please login!')
+            }
+            const user = await usersCollection.findOne({ email: email });
+            const isAdmin = user?.role === 'admin';
+            if (isAdmin) {
+                const result = await itemsCollection.find({}).toArray();
+                // console.log({ result })
+                res.send(result);
+            } else {
+                const result = await itemsCollection.find({ sharedEmail: email }).toArray();
+                console.log({ result })
+                res.send(result);
+            }
+        })
+        // post items from user and admin both
+        app.post('/items', jwtVerify, async (req, res) => {
             const { itemData } = req.body;
             const { email } = req.query;
             if (email !== req?.decoded?.email) {
                 return errorResponse(res, 'unauthenticated trying to add items, please login!')
             }
-            const result = await itemsCollection.insertOne({ itemData });
-            res.send(result)
+            const user = await usersCollection.findOne({ email: email });
+            const isAdmin = user?.role === 'admin';
+            console.log({ user, isAdmin });
+            if (isAdmin) {
+                const result = await itemsCollection.insertOne(itemData);
+                res.send(result)
+            } else {
+                const items = { ...itemData };
+                items.sharedEmail = email;
+                items.status = "pending";
+                const result = await itemsCollection.insertOne(items);
+                res.send(result)
+            }
         })
 
+        // update item from admin only 
         app.patch('/item/update/:id', jwtVerify, adminVerify, async (req, res) => {
             const { email } = req.query;
             const { itemData } = req.body;
@@ -196,6 +224,7 @@ async function run() {
             const result = await itemsCollection.updateOne(filter, updateDoc);
             res.send(result);
         })
+        // update item for like update
         app.patch('/item/like/:id', jwtVerify, async (req, res) => {
             const { id } = req.params;
             const { isLike, email } = req.body;
@@ -218,16 +247,51 @@ async function run() {
             const result = await itemsCollection.updateOne(filter, updateDoc);
             res.send(result);
         })
-        app.delete('/items/:id', jwtVerify, adminVerify, async (req, res) => {
+        // update item for permit 
+        app.patch('/item/permit/:id', jwtVerify, adminVerify, async (req, res) => {
+            const { id } = req.params;
+            const { email } = req.query;
+            if (req?.decoded?.email !== email) {
+                return res.status(403).send({
+                    error: true,
+                    message: 'unauthenticated trying to like, please login with proper email address'
+                })
+            }
+            const filter = { _id: new ObjectId(id) };
+            const updateDoc = {
+                $set: {
+                    status: "done",
+                }
+            }
+            const result = await itemsCollection.updateOne(filter, updateDoc);
+            res.send(result);
+        })
+        app.delete('/items/:id', jwtVerify, async (req, res) => {
             const { email } = req.query;
             const { id } = req.params;
             if (email !== req?.decoded?.email) {
-                return errorResponse(res, 'unauthenticated trying to modify items, please login!')
+                return errorResponse(res, 'unauthenticated trying to delete item, please login!')
             }
+            const user = await usersCollection.findOne({ email: email });
+            const isAdmin = user?.role === 'admin';
+
             const filter = { _id: new ObjectId(id) };
-            const result = await itemsCollection.deleteOne(filter);
-            res.send(result)
+            if (isAdmin) {
+                const result = await itemsCollection.deleteOne(filter);
+                res.send(result)
+            }
+            else {
+                const item = await itemsCollection.findOne(filter);
+                console.log(item);
+                if (item.sharedEmail === email) {
+                    const result = await itemsCollection.deleteOne(filter);
+                    res.send(result)
+                } else {
+                    return errorResponse(res, 'unauthenticated trying to delete others item, please login!')
+                }
+            }
         })
+
         // todo: change this update properly
 
         // booking items operations
